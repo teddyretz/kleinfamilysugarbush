@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Syrup Games | Klein Family Sugarbush</title>
+  <meta name="description" content="Learn how maple syrup is made through fun interactive retro-style games.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Lexend:wght@400;700&family=Montserrat:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/src/css/reset.css">
+  <link rel="stylesheet" href="/src/css/style.css">
+  <link rel="stylesheet" href="/src/css/games.css">
+</head>
+<body>
+  <nav class="nav" aria-label="Main navigation">
+    <a href="/" class="nav__logo">Klein Family Sugarbush</a>
+    <button class="nav__hamburger" aria-label="Toggle menu" aria-expanded="false">
+      <span></span>
+      <span></span>
+      <span></span>
+    </button>
+    <ul class="nav__links">
+      <li><a href="/">Home</a></li>
+      <li><a href="/staff.html">Staff</a></li>
+      <li><a href="/games.html" class="active">Games</a></li>
+    </ul>
+  </nav>
+
+  <main>
+    <section class="section section--dark games-intro">
+      <h1 class="section__title">Maple Syrup Games</h1>
+      <p class="section__text">
+        Ever wonder what it takes to make real maple syrup? Play our retro-style
+        games and find out! Start by tapping trees, then boil the sap down
+        into syrup.
+      </p>
+    </section>
+
+    <div class="game-cards" id="game-select">
+      <div class="game-card">
+        <div class="game-card__icon" aria-hidden="true">🪣</div>
+        <h2 class="game-card__title">Tapping &amp; Collecting</h2>
+        <p class="game-card__desc">
+          Head into the sugar bush! Tap maple trees, hang buckets, and collect
+          sap before it overflows. Can you gather 40 gallons?
+        </p>
+        <button class="btn btn--primary" data-game="tapping">Play</button>
+      </div>
+      <div class="game-card">
+        <div class="game-card__icon" aria-hidden="true">🔥</div>
+        <h2 class="game-card__title">Boiling Simulation</h2>
+        <p class="game-card__desc">
+          Fire up the evaporator! Manage the heat, watch the sap transform,
+          and draw off your syrup at just the right moment.
+        </p>
+        <button class="btn btn--primary" data-game="boiling">Play</button>
+      </div>
+    </div>
+
+    <div class="game-wrapper" id="game-wrapper">
+      <button class="game-wrapper__back" id="back-to-select">
+        &larr; Back to Game Select
+      </button>
+      <div id="game-container" aria-label="Maple syrup production game"></div>
+    </div>
+  </main>
+
+  <footer class="footer">
+    <p>&copy; 2026 Klein Family Sugarbush. All rights reserved.</p>
+  </footer>
+
+  <script type="module" src="/src/js/nav.js"></script>
+  <script type="module" src="/src/js/analytics.js"></script>
+  <script type="module">
+    const gameSelect = document.getElementById('game-select');
+    const gameWrapper = document.getElementById('game-wrapper');
+    const backBtn = document.getElementById('back-to-select');
+    let gameStarted = false;
+
+    function showGame(mode) {
+      gameSelect.style.display = 'none';
+      gameWrapper.classList.add('active');
+
+      if (!gameStarted) {
+        import('/src/js/game/main.js').then(({ startGame }) => {
+          startGame(mode);
+          gameStarted = true;
+        });
+      } else {
+        import('/src/js/game/main.js').then(({ switchGame }) => {
+          switchGame(mode);
+        });
+      }
+    }
+
+    function showSelect() {
+      gameWrapper.classList.remove('active');
+      gameSelect.style.display = '';
+    }
+
+    document.querySelectorAll('[data-game]').forEach(btn => {
+      btn.addEventListener('click', () => showGame(btn.dataset.game));
+    });
+
+    backBtn.addEventListener('click', showSelect);
+  </script>
+</body>
+</html>

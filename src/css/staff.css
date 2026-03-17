@@ -1,0 +1,83 @@
+/* ===== Staff Header ===== */
+
+.staff-header {
+  text-align: center;
+  padding: 3rem 1.5rem 1rem;
+}
+
+.staff-header__photo {
+  max-width: 600px;
+  margin: 1.5rem auto 0;
+  border-radius: 8px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+}
+
+/* ===== Staff Grid ===== */
+
+.staff-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 2rem;
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding: 2rem 1.5rem;
+}
+
+.staff-card {
+  text-align: center;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  padding: 1.5rem 1rem;
+  transition: transform 0.2s;
+}
+
+.staff-card:hover {
+  transform: translateY(-4px);
+}
+
+.staff-card__photo {
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  object-fit: cover;
+  margin: 0 auto 1rem;
+  border: 3px solid var(--color-accent);
+}
+
+.staff-card__name {
+  font-family: var(--font-heading);
+  font-size: 1.1rem;
+  margin-bottom: 0.25rem;
+}
+
+.staff-card__title {
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+/* ===== Responsive ===== */
+
+@media (max-width: 1024px) {
+  .staff-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 768px) {
+  .staff-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1.5rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .staff-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .staff-card__photo {
+    width: 100px;
+    height: 100px;
+  }
+}
