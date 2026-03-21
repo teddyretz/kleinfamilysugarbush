@@ -3,6 +3,8 @@ import {
   GAME_WIDTH, GAME_HEIGHT, SYRUP_TEMP, BOILING_POINT, BURN_TEMP,
   ROOM_TEMP, SYRUP_BRIX_MIN, SYRUP_BRIX_MAX, FIRE_DECAY_RATE,
   WOOD_HEAT_BOOST, MAX_WOOD, TEMP_RISE_RATE, GRADES,
+  UNCUT_LOGS_START, CHOP_SWEET_SPOT_DURATION, LOG_FALL_TIMEOUT,
+  LOG_WOBBLE_WARNING, AXE_CYCLE_DURATION,
 } from '../config/constants.js';
 import { BOILING_FACTS } from '../config/educational.js';
 
@@ -19,16 +21,23 @@ export class BoilingGame extends Phaser.Scene {
     this.temperature = ROOM_TEMP;
     this.fireLevel = 0;
     this.sapConcentration = 0;
-    this.woodCount = MAX_WOOD;
+    this.woodCount = 0;
     this.isBurned = false;
     this.isPaused = false;
     this.shownFacts = new Set();
     this.boilingStarted = false;
     this.canDrawOff = false;
 
+    this.uncutLogs = UNCUT_LOGS_START;
+    this.axeAngle = 0;
+    this.axeGoingDown = true;
+    this.logFallTimer = 0;
+    this.chopResult = null;
+
     this.cameras.main.setBackgroundColor('#3a2a1a');
     this.drawSugarHouse();
     this.createEvaporator();
+    this.createChoppingBlock();
     this.createWoodPile();
     this.createThermometer();
     this.createControls();
@@ -170,8 +179,233 @@ export class BoilingGame extends Phaser.Scene {
     }
   }
 
+  createChoppingBlock() {
+    const blockX = 60;
+    const blockY = 240;
+
+    this.choppingBlockGfx = this.add.graphics();
+    const bg = this.choppingBlockGfx;
+    // Stump base
+    bg.fillStyle(0x5c3d2e);
+    bg.fillRect(blockX - 30, blockY, 60, 15);
+    // Stump top
+    bg.fillStyle(0x6b4226);
+    bg.fillRect(blockX - 25, blockY - 20, 50, 20);
+
+    // Log on block
+    this.logGfx = this.add.graphics();
+    this.drawLogOnBlock();
+
+    // Axe container
+    this.axeContainer = this.add.container(blockX, blockY - 60);
+    const axeGfx = this.add.graphics();
+    // Handle
+    axeGfx.fillStyle(0x6b4226);
+    axeGfx.fillRect(-2, 0, 4, 35);
+    // Blade
+    this.axeBladeGfx = this.add.graphics();
+    this.axeBladeGfx.fillStyle(0x888888);
+    this.axeBladeGfx.fillTriangle(2, 4, 2, 16, 14, 10);
+    this.axeContainer.add(axeGfx);
+    this.axeContainer.add(this.axeBladeGfx);
+
+    // Interactive zone
+    this.chopZone = this.add.rectangle(blockX, blockY - 30, 80, 100, 0x000000, 0)
+      .setInteractive({ useHandCursor: true });
+    this.chopZone.on('pointerdown', () => {
+      this.attemptChop();
+    });
+
+    // Labels
+    this.uncutLogText = this.add.text(blockX, blockY + 22, `Logs: ${this.uncutLogs}`, {
+      fontFamily: 'monospace',
+      fontSize: '9px',
+      color: '#b0bec5',
+    }).setOrigin(0.5);
+
+    this.choppingActive = true;
+  }
+
+  drawLogOnBlock() {
+    const g = this.logGfx;
+    g.clear();
+    const blockX = 60;
+    const blockY = 240;
+    // Log circle (end grain)
+    g.fillStyle(0x8b5a3e);
+    g.fillCircle(blockX, blockY - 34, 14);
+    // Wood grain rings
+    g.lineStyle(1, 0x6b4226);
+    g.strokeCircle(blockX, blockY - 34, 10);
+    g.strokeCircle(blockX, blockY - 34, 6);
+    g.strokeCircle(blockX, blockY - 34, 2);
+    g.setAngle(0);
+  }
+
+  updateChoppingBlock(delta) {
+    if (!this.choppingActive) return;
+
+    const dt = delta / 1000;
+
+    // Axe oscillation using sine wave
+    const cycleMs = AXE_CYCLE_DURATION;
+    const t = (this.time.now % cycleMs) / cycleMs;
+    this.axeAngle = -0.25 + 0.55 * Math.sin(t * Math.PI * 2);
+    // Clamp to range [-0.8, 0.3]
+    this.axeAngle = Phaser.Math.Clamp(this.axeAngle, -0.8, 0.3);
+
+    // Sweet spot visual feedback
+    const inSweetSpot = this.axeAngle > 0.1;
+    this.axeBladeGfx.clear();
+    this.axeBladeGfx.fillStyle(inSweetSpot ? 0xffdd00 : 0x888888);
+    this.axeBladeGfx.fillTriangle(2, 4, 2, 16, 14, 10);
+
+    // Rotate axe container
+    this.axeContainer.setRotation(this.axeAngle);
+
+    // Log fall timer
+    this.logFallTimer += dt;
+
+    if (this.logFallTimer >= LOG_WOBBLE_WARNING && this.logFallTimer < LOG_FALL_TIMEOUT) {
+      // Wobble the log
+      const wobble = Math.sin(this.time.now * 0.02) * 0.08;
+      this.logGfx.setRotation(wobble);
+    }
+
+    if (this.logFallTimer >= LOG_FALL_TIMEOUT) {
+      this.logFallOver();
+    }
+  }
+
+  attemptChop() {
+    if (this.isPaused || this.isBurned || !this.choppingActive) return;
+
+    const inSweetSpot = this.axeAngle > 0.1;
+
+    if (inSweetSpot) {
+      this.choppingSuccess();
+    } else {
+      // Flash axe red
+      this.axeBladeGfx.clear();
+      this.axeBladeGfx.fillStyle(0xff0000);
+      this.axeBladeGfx.fillTriangle(2, 4, 2, 16, 14, 10);
+      this.time.delayedCall(200, () => {
+        if (this.choppingActive) {
+          this.axeBladeGfx.clear();
+          this.axeBladeGfx.fillStyle(0x888888);
+          this.axeBladeGfx.fillTriangle(2, 4, 2, 16, 14, 10);
+        }
+      });
+
+      // Show MISS text
+      const missText = this.add.text(60, 190, 'MISS!', {
+        fontFamily: 'monospace',
+        fontSize: '12px',
+        color: '#ff4444',
+        stroke: '#000',
+        strokeThickness: 2,
+      }).setOrigin(0.5);
+      this.tweens.add({
+        targets: missText,
+        y: missText.y - 20,
+        alpha: 0,
+        duration: 600,
+        onComplete: () => missText.destroy(),
+      });
+    }
+  }
+
+  choppingSuccess() {
+    this.logFallTimer = 0;
+    this.woodCount = Math.min(MAX_WOOD, this.woodCount + 1);
+
+    // Split animation
+    const blockX = 60;
+    const blockY = 240;
+    const leftHalf = this.add.graphics();
+    leftHalf.fillStyle(0x8b5a3e);
+    leftHalf.fillArc(blockX, blockY - 34, 14, Phaser.Math.DegToRad(90), Phaser.Math.DegToRad(270), false);
+    const rightHalf = this.add.graphics();
+    rightHalf.fillStyle(0x8b5a3e);
+    rightHalf.fillArc(blockX, blockY - 34, 14, Phaser.Math.DegToRad(270), Phaser.Math.DegToRad(90), false);
+
+    this.logGfx.clear();
+
+    this.tweens.add({
+      targets: leftHalf,
+      x: -25,
+      alpha: 0,
+      duration: 400,
+      onComplete: () => leftHalf.destroy(),
+    });
+    this.tweens.add({
+      targets: rightHalf,
+      x: 25,
+      alpha: 0,
+      duration: 400,
+      onComplete: () => rightHalf.destroy(),
+    });
+
+    // Update wood count display
+    this.updateWoodPile();
+    this.woodCountText.setText(`Ready: ${this.woodCount}`);
+
+    this.uncutLogs--;
+    if (this.uncutLogs > 0) {
+      this.uncutLogText.setText(`Logs: ${this.uncutLogs}`);
+      this.time.delayedCall(500, () => {
+        this.drawLogOnBlock();
+      });
+    } else {
+      this.uncutLogText.setText('Logs: 0');
+      this.choppingActive = false;
+      this.chopZone.disableInteractive();
+      this.logGfx.setVisible(false);
+      this.axeContainer.setVisible(false);
+    }
+
+    if (this.hintText) {
+      this.updateHintForChopping();
+    }
+  }
+
+  logFallOver() {
+    this.logFallTimer = 0;
+
+    this.tweens.add({
+      targets: this.logGfx,
+      rotation: Math.PI / 2,
+      duration: 400,
+      onComplete: () => {
+        this.uncutLogs--;
+        if (this.uncutLogs > 0) {
+          this.uncutLogText.setText(`Logs: ${this.uncutLogs}`);
+          this.time.delayedCall(500, () => {
+            this.logGfx.setRotation(0);
+            this.drawLogOnBlock();
+          });
+        } else {
+          this.uncutLogText.setText('Logs: 0');
+          this.choppingActive = false;
+          this.chopZone.disableInteractive();
+          this.logGfx.setVisible(false);
+          this.axeContainer.setVisible(false);
+        }
+      },
+    });
+  }
+
+  updateHintForChopping() {
+    if (this.isBurned) return;
+    if (this.woodCount > 0 && this.fireLevel <= 0) {
+      this.hintText.setText('Add chopped wood to the fire!').setColor('#ffdd57');
+    } else if (this.choppingActive) {
+      this.hintText.setText('Chop wood to get started!').setColor('#ffdd57');
+    }
+  }
+
   createWoodPile() {
-    const woodX = 50;
+    const woodX = 160;
     const woodY = GAME_HEIGHT - 80;
 
     // Wood pile hit area
@@ -181,7 +415,7 @@ export class BoilingGame extends Phaser.Scene {
     this.woodPileGraphics = this.add.graphics();
     this.updateWoodPile();
 
-    this.woodCountText = this.add.text(woodX, woodY + 35, `Wood: ${this.woodCount}`, {
+    this.woodCountText = this.add.text(woodX, woodY + 35, `Ready: ${this.woodCount}`, {
       fontFamily: 'monospace',
       fontSize: '9px',
       color: '#b0bec5',
@@ -194,14 +428,14 @@ export class BoilingGame extends Phaser.Scene {
       this.woodCount--;
       this.fireLevel = Math.min(100, this.fireLevel + WOOD_HEAT_BOOST);
       this.updateWoodPile();
-      this.woodCountText.setText(`Wood: ${this.woodCount}`);
+      this.woodCountText.setText(`Ready: ${this.woodCount}`);
     });
   }
 
   updateWoodPile() {
     const g = this.woodPileGraphics;
     g.clear();
-    const woodX = 50;
+    const woodX = 160;
     const woodY = GAME_HEIGHT - 80;
     const logsToShow = Math.ceil((this.woodCount / MAX_WOOD) * 4);
 
@@ -397,7 +631,7 @@ export class BoilingGame extends Phaser.Scene {
     });
 
     // Hint
-    this.hintText = this.add.text(GAME_WIDTH / 2, 10, 'Add wood to start the fire!', {
+    this.hintText = this.add.text(GAME_WIDTH / 2, 10, 'Chop wood to get started!', {
       fontFamily: 'monospace',
       fontSize: '9px',
       color: '#ffdd57',
@@ -420,6 +654,10 @@ export class BoilingGame extends Phaser.Scene {
       this.hintText.setText('CAREFUL! Temperature is too high!').setColor('#ff4444');
     } else if (this.fireLevel <= 5 && this.temperature > ROOM_TEMP + 10) {
       this.hintText.setText('Fire is dying! Add more wood!').setColor('#ffdd57');
+    } else if (this.woodCount > 0 && this.fireLevel <= 0) {
+      this.hintText.setText('Add chopped wood to the fire!').setColor('#ffdd57');
+    } else if (this.choppingActive && this.woodCount === 0) {
+      this.hintText.setText('Chop wood to get started!').setColor('#ffdd57');
     }
   }
 
@@ -518,6 +756,9 @@ export class BoilingGame extends Phaser.Scene {
     if (this.isPaused || this.isBurned) return;
 
     const dt = delta / 1000;
+
+    // Update chopping block
+    this.updateChoppingBlock(delta);
 
     // Fire decays
     this.fireLevel = Math.max(0, this.fireLevel - FIRE_DECAY_RATE * dt);

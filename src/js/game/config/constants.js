@@ -19,6 +19,11 @@ export const FIRE_DECAY_RATE = 3;
 export const WOOD_HEAT_BOOST = 20;
 export const MAX_WOOD = 8;
 export const TEMP_RISE_RATE = 5;
+export const UNCUT_LOGS_START = 6;
+export const CHOP_SWEET_SPOT_DURATION = 0.35;
+export const LOG_FALL_TIMEOUT = 3.0;
+export const LOG_WOBBLE_WARNING = 2.0;
+export const AXE_CYCLE_DURATION = 1400;
 
 // Grade thresholds (based on concentration percentage 0-100)
 export const GRADES = [
