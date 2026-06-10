@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { GAME_WIDTH, GAME_HEIGHT, COLORS } from '../config/constants.js';
+import { sfx } from '../audio.js';
 
 export class TappingIntro extends Phaser.Scene {
   constructor() {
@@ -26,8 +27,8 @@ export class TappingIntro extends Phaser.Scene {
     // Instructions
     const instructions = [
       'Tap trees to drill and hang buckets.',
-      'Collect sap before buckets overflow!',
-      'Gather 40 gallons to make syrup.',
+      'Sap runs fast on warm days, slow on cold nights.',
+      'Collect 40 gallons before the buckets overflow!',
     ];
 
     instructions.forEach((line, i) => {
@@ -50,6 +51,7 @@ export class TappingIntro extends Phaser.Scene {
     btnBg.on('pointerover', () => btnBg.setFillStyle(0x2a5faa));
     btnBg.on('pointerout', () => btnBg.setFillStyle(0x1c4587));
     btnBg.on('pointerdown', () => {
+      sfx.click();
       this.scene.start('TappingGame');
     });
   }

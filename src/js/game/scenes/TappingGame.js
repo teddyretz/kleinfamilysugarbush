@@ -2,8 +2,13 @@ import Phaser from 'phaser';
 import {
   GAME_WIDTH, GAME_HEIGHT, SAP_GOAL, TREE_COUNT,
   BUCKET_CAPACITY, DRIP_RATE_BASE, OVERFLOW_PENALTY, COLORS,
+  DAY_DURATION, NIGHT_DURATION, DAY_DRIP_MULT, NIGHT_DRIP_MULT,
 } from '../config/constants.js';
 import { TAPPING_FACTS } from '../config/educational.js';
+import { sfx } from '../audio.js';
+
+const DAY_SKY = '#4a6fa5';
+const NIGHT_SKY = '#222f4e';
 
 export class TappingGame extends Phaser.Scene {
   constructor() {
@@ -14,11 +19,15 @@ export class TappingGame extends Phaser.Scene {
     this.totalSap = 0;
     this.shownFacts = new Set();
     this.isPaused = false;
+    this.isDay = true;
+    this.weatherTimer = 0;
 
-    this.cameras.main.setBackgroundColor(COLORS.sky);
+    this.cameras.main.setBackgroundColor(DAY_SKY);
     this.drawBackground();
     this.createTrees();
     this.createUI();
+    this.createWeatherUI();
+    this.updateHint();
   }
 
   drawBackground() {
@@ -77,11 +86,11 @@ export class TappingGame extends Phaser.Scene {
       tapped: false,
       hasBucket: false,
       bucketLevel: 0,
+      dripTimer: 0,
       container,
       bucketGraphics: null,
       sapBar: null,
       tapSprite: null,
-      dripTimer: null,
     };
 
     hitZone.on('pointerdown', () => this.onTreeClick(treeState));
@@ -102,6 +111,9 @@ export class TappingGame extends Phaser.Scene {
       tap.fillRect(12, -10, 4, 8);
       tree.container.add(tap);
       tree.tapSprite = tap;
+      sfx.drill();
+      this.spawnWoodChips(tree);
+      this.updateHint();
     } else if (!tree.hasBucket) {
       // Hang bucket
       tree.hasBucket = true;
@@ -117,6 +129,10 @@ export class TappingGame extends Phaser.Scene {
       tree.container.add(bucket);
       tree.bucketGraphics = bucket;
 
+      // Drop-in bounce
+      bucket.y = -8;
+      this.tweens.add({ targets: bucket, y: 0, duration: 250, ease: 'Bounce.easeOut' });
+
       // Sap level bar background
       const sapBg = this.add.graphics();
       sapBg.fillStyle(0x444444);
@@ -128,6 +144,8 @@ export class TappingGame extends Phaser.Scene {
       tree.container.add(sapBar);
       tree.sapBar = sapBar;
 
+      sfx.bucket();
+      this.updateHint();
     } else if (tree.bucketLevel > 0) {
       // Collect sap
       const collected = tree.bucketLevel;
@@ -135,6 +153,7 @@ export class TappingGame extends Phaser.Scene {
       this.totalSap = Math.min(this.totalSap + collected, SAP_GOAL);
       this.updateUI();
       this.updateBucketVisual(tree);
+      sfx.collect();
 
       // Floating text
       const floatText = this.add.text(
@@ -154,6 +173,34 @@ export class TappingGame extends Phaser.Scene {
       this.checkFacts();
       this.checkWin();
     }
+  }
+
+  spawnWoodChips(tree) {
+    for (let i = 0; i < 5; i++) {
+      const chip = this.add.rectangle(
+        tree.container.x + 14, tree.container.y - 8, 3, 3, 0x8b5a3e
+      );
+      this.tweens.add({
+        targets: chip,
+        x: chip.x + Phaser.Math.Between(-18, 18),
+        y: chip.y + Phaser.Math.Between(-14, 10),
+        alpha: 0,
+        duration: 350,
+        onComplete: () => chip.destroy(),
+      });
+    }
+  }
+
+  spawnDrip(tree) {
+    const wx = tree.container.x + 17;
+    const wy = tree.container.y - 9;
+    const drop = this.add.rectangle(wx, wy, 3, 4, 0xf0d4a8);
+    this.tweens.add({
+      targets: drop,
+      y: wy + 8,
+      duration: 280,
+      onComplete: () => drop.destroy(),
+    });
   }
 
   updateBucketVisual(tree) {
@@ -186,11 +233,53 @@ export class TappingGame extends Phaser.Scene {
     });
 
     // Hint text
-    this.hintText = this.add.text(GAME_WIDTH / 2, GAME_HEIGHT - 15, 'Tap a tree to start!', {
+    this.hintText = this.add.text(GAME_WIDTH / 2, GAME_HEIGHT - 15, '', {
       fontFamily: 'monospace',
       fontSize: '10px',
       color: '#b0bec5',
     }).setOrigin(0.5);
+  }
+
+  createWeatherUI() {
+    this.weatherIcon = this.add.graphics();
+    this.weatherText = this.add.text(GAME_WIDTH - 10, 32, '', {
+      fontFamily: 'monospace',
+      fontSize: '8px',
+      color: '#e0e0e0',
+      stroke: '#000',
+      strokeThickness: 2,
+    }).setOrigin(1, 0);
+    this.setWeather(true);
+  }
+
+  setWeather(isDay) {
+    this.isDay = isDay;
+    this.weatherTimer = 0;
+    this.cameras.main.setBackgroundColor(isDay ? DAY_SKY : NIGHT_SKY);
+    this.weatherText.setText(isDay ? 'Warm day: sap is flowing!' : 'Freezing night: sap slows...');
+    this.drawWeatherIcon();
+  }
+
+  drawWeatherIcon() {
+    const g = this.weatherIcon;
+    g.clear();
+    const x = GAME_WIDTH - 24;
+    const y = 18;
+    if (this.isDay) {
+      // Pixel sun with rays
+      g.fillStyle(0xffdd57);
+      g.fillRect(x - 6, y - 6, 12, 12);
+      g.fillRect(x - 11, y - 2, 4, 4);
+      g.fillRect(x + 7, y - 2, 4, 4);
+      g.fillRect(x - 2, y - 11, 4, 4);
+      g.fillRect(x - 2, y + 7, 4, 4);
+    } else {
+      // Pixel crescent moon
+      g.fillStyle(0xdde4f0);
+      g.fillRect(x - 6, y - 6, 12, 12);
+      g.fillStyle(Phaser.Display.Color.HexStringToColor(NIGHT_SKY).color);
+      g.fillRect(x - 6, y - 6, 7, 7);
+    }
   }
 
   updateUI() {
@@ -200,9 +289,21 @@ export class TappingGame extends Phaser.Scene {
     this.progressBar.fillRect(12, 12, Math.round(fill * 196), 16);
 
     this.sapText.setText(`${this.totalSap.toFixed(1)} / ${SAP_GOAL} gal`);
+  }
 
-    if (this.totalSap > 0 && this.hintText.visible) {
-      this.hintText.setText('Tap buckets to collect sap!');
+  updateHint() {
+    const anyBucket = this.trees.some(t => t.hasBucket);
+    const anyTappedNoBucket = this.trees.some(t => t.tapped && !t.hasBucket);
+    const allWorking = this.trees.every(t => t.hasBucket);
+
+    if (!anyBucket && !anyTappedNoBucket) {
+      this.hintText.setText('Click a tree to drill a tap hole!');
+    } else if (anyTappedNoBucket) {
+      this.hintText.setText('Click the tapped tree again to hang a bucket!');
+    } else if (!allWorking) {
+      this.hintText.setText('Tap more trees, and collect sap before buckets overflow!');
+    } else {
+      this.hintText.setText('Click buckets to collect sap before they overflow!');
     }
   }
 
@@ -218,6 +319,7 @@ export class TappingGame extends Phaser.Scene {
 
   showPopup(title, text) {
     this.isPaused = true;
+    sfx.popup();
     const overlay = this.add.container(0, 0).setDepth(100);
 
     // Dim background
@@ -272,6 +374,7 @@ export class TappingGame extends Phaser.Scene {
     overlay.add(btnText);
 
     btnBg.on('pointerdown', () => {
+      sfx.click();
       overlay.destroy();
       this.isPaused = false;
     });
@@ -288,15 +391,32 @@ export class TappingGame extends Phaser.Scene {
   update(time, delta) {
     if (this.isPaused) return;
 
+    const dt = delta / 1000;
+
+    // Freeze/thaw cycle: sap runs fast on warm days, slows on cold nights
+    this.weatherTimer += dt;
+    if (this.weatherTimer >= (this.isDay ? DAY_DURATION : NIGHT_DURATION)) {
+      this.setWeather(!this.isDay);
+    }
+    const dripMult = this.isDay ? DAY_DRIP_MULT : NIGHT_DRIP_MULT;
+
     for (const tree of this.trees) {
       if (!tree.hasBucket) continue;
 
-      tree.bucketLevel += DRIP_RATE_BASE * (delta / 1000);
+      tree.bucketLevel += DRIP_RATE_BASE * dripMult * dt;
+
+      // Drip animation from the tap into the bucket
+      tree.dripTimer += dt;
+      if (tree.dripTimer >= (this.isDay ? 0.7 : 2.2)) {
+        tree.dripTimer = 0;
+        this.spawnDrip(tree);
+      }
 
       if (tree.bucketLevel >= BUCKET_CAPACITY) {
         tree.bucketLevel = BUCKET_CAPACITY * 0.3;
         this.totalSap = Math.max(0, this.totalSap - OVERFLOW_PENALTY);
         this.updateUI();
+        sfx.overflow();
 
         // Flash red warning
         const flash = this.add.rectangle(

@@ -88,6 +88,12 @@
   height: 100% !important;
 }
 
+.game-wrapper__note {
+  margin-top: 0.75rem;
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+}
+
 /* ===== Responsive ===== */
 
 @media (max-width: 600px) {

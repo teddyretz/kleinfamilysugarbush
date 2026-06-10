@@ -1,12 +1,16 @@
 import Phaser from 'phaser';
 import {
   GAME_WIDTH, GAME_HEIGHT, SYRUP_TEMP, BOILING_POINT, BURN_TEMP,
-  ROOM_TEMP, SYRUP_BRIX_MIN, SYRUP_BRIX_MAX, FIRE_DECAY_RATE,
-  WOOD_HEAT_BOOST, MAX_WOOD, TEMP_RISE_RATE, GRADES,
-  UNCUT_LOGS_START, CHOP_SWEET_SPOT_DURATION, LOG_FALL_TIMEOUT,
+  ROOM_TEMP, SYRUP_BRIX_MIN, FIRE_DECAY_RATE,
+  WOOD_HEAT_BOOST, MAX_WOOD, TEMP_APPROACH_RATE, TEMP_COOL_FACTOR, GRADES,
+  UNCUT_LOGS_START, LOG_DELIVERY_INTERVAL, LOG_FALL_TIMEOUT,
   LOG_WOBBLE_WARNING, AXE_CYCLE_DURATION,
+  BRIX_RISE_COEFF, BRIX_SOFT_CEIL, BRIX_MAX, BRIX_FALL_RATE,
+  DRAW_BRIX_MAX, DRAW_TEMP_MIN, DRAW_TEMP_MAX,
+  SAP_ADD_DILUTION, SAP_ADD_COOLING, DARKNESS_RATE,
 } from '../config/constants.js';
 import { BOILING_FACTS } from '../config/educational.js';
+import { sfx } from '../audio.js';
 
 export class BoilingGame extends Phaser.Scene {
   constructor() {
@@ -20,7 +24,8 @@ export class BoilingGame extends Phaser.Scene {
   create() {
     this.temperature = ROOM_TEMP;
     this.fireLevel = 0;
-    this.sapConcentration = 0;
+    this.brix = 0;
+    this.darkness = 0;
     this.woodCount = 0;
     this.isBurned = false;
     this.isPaused = false;
@@ -29,10 +34,10 @@ export class BoilingGame extends Phaser.Scene {
     this.canDrawOff = false;
 
     this.uncutLogs = UNCUT_LOGS_START;
+    this.logDeliveryTimer = 0;
     this.axeAngle = 0;
-    this.axeGoingDown = true;
     this.logFallTimer = 0;
-    this.chopResult = null;
+    this.logFalling = false;
 
     this.cameras.main.setBackgroundColor('#3a2a1a');
     this.drawSugarHouse();
@@ -98,9 +103,6 @@ export class BoilingGame extends Phaser.Scene {
 
     // Fire area
     this.fireGraphics = this.add.graphics();
-
-    // Steam particles container
-    this.steamParticles = [];
   }
 
   updateSapColor() {
@@ -109,8 +111,9 @@ export class BoilingGame extends Phaser.Scene {
     const evapX = GAME_WIDTH / 2;
     const evapY = GAME_HEIGHT - 100;
 
-    // Lerp color from light sap to dark syrup based on concentration
-    const t = this.sapConcentration / 100;
+    // Lerp color from light sap to dark syrup. Density makes it golden;
+    // longer boil time makes it darker.
+    const t = Math.min(1, (this.brix / BRIX_MAX) * 0.5 + (this.darkness / 100) * 0.5);
     const r = Math.round(Phaser.Math.Linear(240, 139, t));
     const gr = Math.round(Phaser.Math.Linear(212, 69, t));
     const b = Math.round(Phaser.Math.Linear(168, 19, t));
@@ -278,13 +281,14 @@ export class BoilingGame extends Phaser.Scene {
   }
 
   attemptChop() {
-    if (this.isPaused || this.isBurned || !this.choppingActive) return;
+    if (this.isPaused || this.isBurned || !this.choppingActive || this.logFalling) return;
 
     const inSweetSpot = this.axeAngle > 0.1;
 
     if (inSweetSpot) {
       this.choppingSuccess();
     } else {
+      sfx.miss();
       // Flash axe red
       this.axeBladeGfx.clear();
       this.axeBladeGfx.fillStyle(0xff0000);
@@ -318,6 +322,7 @@ export class BoilingGame extends Phaser.Scene {
   choppingSuccess() {
     this.logFallTimer = 0;
     this.woodCount = Math.min(MAX_WOOD, this.woodCount + 1);
+    sfx.chop();
 
     // Split animation
     const blockX = 60;
@@ -350,57 +355,74 @@ export class BoilingGame extends Phaser.Scene {
     this.updateWoodPile();
     this.woodCountText.setText(`Ready: ${this.woodCount}`);
 
-    this.uncutLogs--;
-    if (this.uncutLogs > 0) {
-      this.uncutLogText.setText(`Logs: ${this.uncutLogs}`);
-      this.time.delayedCall(500, () => {
-        this.drawLogOnBlock();
-      });
-    } else {
-      this.uncutLogText.setText('Logs: 0');
-      this.choppingActive = false;
-      this.chopZone.disableInteractive();
-      this.logGfx.setVisible(false);
-      this.axeContainer.setVisible(false);
-    }
-
-    if (this.hintText) {
-      this.updateHintForChopping();
-    }
+    this.consumeLog();
   }
 
   logFallOver() {
     this.logFallTimer = 0;
+    this.logFalling = true;
 
     this.tweens.add({
       targets: this.logGfx,
       rotation: Math.PI / 2,
       duration: 400,
       onComplete: () => {
-        this.uncutLogs--;
-        if (this.uncutLogs > 0) {
-          this.uncutLogText.setText(`Logs: ${this.uncutLogs}`);
-          this.time.delayedCall(500, () => {
-            this.logGfx.setRotation(0);
-            this.drawLogOnBlock();
-          });
-        } else {
-          this.uncutLogText.setText('Logs: 0');
-          this.choppingActive = false;
-          this.chopZone.disableInteractive();
-          this.logGfx.setVisible(false);
-          this.axeContainer.setVisible(false);
-        }
+        this.logFalling = false;
+        this.logGfx.setRotation(0);
+        this.consumeLog();
       },
     });
   }
 
-  updateHintForChopping() {
-    if (this.isBurned) return;
-    if (this.woodCount > 0 && this.fireLevel <= 0) {
-      this.hintText.setText('Add chopped wood to the fire!').setColor('#ffdd57');
-    } else if (this.choppingActive) {
-      this.hintText.setText('Chop wood to get started!').setColor('#ffdd57');
+  consumeLog() {
+    this.uncutLogs--;
+    this.uncutLogText.setText(`Logs: ${this.uncutLogs}`);
+    if (this.uncutLogs > 0) {
+      this.time.delayedCall(500, () => {
+        if (this.choppingActive) this.drawLogOnBlock();
+      });
+    } else {
+      this.stopChopping();
+    }
+  }
+
+  stopChopping() {
+    this.choppingActive = false;
+    this.chopZone.disableInteractive();
+    this.logGfx.setVisible(false);
+    this.axeContainer.setVisible(false);
+  }
+
+  resumeChopping() {
+    this.choppingActive = true;
+    this.logFallTimer = 0;
+    this.chopZone.setInteractive({ useHandCursor: true });
+    this.logGfx.setVisible(true).setRotation(0);
+    this.axeContainer.setVisible(true);
+    this.drawLogOnBlock();
+  }
+
+  deliverLog() {
+    this.uncutLogs++;
+    this.uncutLogText.setText(`Logs: ${this.uncutLogs}`);
+
+    const deliverText = this.add.text(60, 200, '+1 log', {
+      fontFamily: 'monospace',
+      fontSize: '10px',
+      color: '#a5d6a7',
+      stroke: '#000',
+      strokeThickness: 2,
+    }).setOrigin(0.5);
+    this.tweens.add({
+      targets: deliverText,
+      y: deliverText.y - 18,
+      alpha: 0,
+      duration: 800,
+      onComplete: () => deliverText.destroy(),
+    });
+
+    if (!this.choppingActive) {
+      this.resumeChopping();
     }
   }
 
@@ -429,6 +451,7 @@ export class BoilingGame extends Phaser.Scene {
       this.fireLevel = Math.min(100, this.fireLevel + WOOD_HEAT_BOOST);
       this.updateWoodPile();
       this.woodCountText.setText(`Ready: ${this.woodCount}`);
+      sfx.wood();
     });
   }
 
@@ -524,7 +547,22 @@ export class BoilingGame extends Phaser.Scene {
 
     hydroBg.on('pointerdown', () => {
       if (this.isPaused || this.isBurned) return;
+      sfx.click();
       this.checkDensity();
+    });
+
+    // Add sap button - fresh sap thins the batch and cools the pan
+    const sapBg = this.add.rectangle(GAME_WIDTH - 135, hydroY, 80, 28, 0x6d4c41)
+      .setInteractive({ useHandCursor: true });
+    this.add.text(GAME_WIDTH - 135, hydroY, 'ADD SAP', {
+      fontFamily: 'monospace',
+      fontSize: '11px',
+      color: '#ffffff',
+    }).setOrigin(0.5);
+
+    sapBg.on('pointerdown', () => {
+      if (this.isPaused || this.isBurned) return;
+      this.addSap();
     });
 
     // Draw off button (hidden until ready)
@@ -538,38 +576,68 @@ export class BoilingGame extends Phaser.Scene {
     }).setOrigin(0.5).setVisible(false);
 
     this.drawOffBtn.on('pointerdown', () => {
-      if (this.isPaused) return;
+      if (this.isPaused || !this.canDrawOff) return;
       this.drawOff();
     });
   }
 
+  addSap() {
+    this.brix = Math.max(0, this.brix - SAP_ADD_DILUTION);
+    this.temperature = Math.max(ROOM_TEMP, this.temperature - SAP_ADD_COOLING);
+    sfx.addSap();
+
+    const evapX = GAME_WIDTH / 2;
+    const evapY = GAME_HEIGHT - 100;
+    const splash = this.add.text(evapX, evapY - 20, '+ sap', {
+      fontFamily: 'monospace',
+      fontSize: '11px',
+      color: '#f0d4a8',
+      stroke: '#000',
+      strokeThickness: 2,
+    }).setOrigin(0.5);
+    this.tweens.add({
+      targets: splash,
+      y: splash.y - 16,
+      alpha: 0,
+      duration: 700,
+      onComplete: () => splash.destroy(),
+    });
+  }
+
   checkDensity() {
-    const brix = this.getBrix();
-    const inRange = brix >= SYRUP_BRIX_MIN && brix <= SYRUP_BRIX_MAX;
-    const tempOk = this.temperature >= SYRUP_TEMP - 2 && this.temperature <= SYRUP_TEMP + 5;
+    const brix = this.brix;
+    this.lastCheckText.setText(`Hydrometer: ${brix.toFixed(1)} Brix`);
 
     let message = `Density: ${brix.toFixed(1)} Brix`;
     if (brix < SYRUP_BRIX_MIN) {
       message += '\nNot concentrated enough yet!';
-    } else if (brix > SYRUP_BRIX_MAX) {
-      message += '\nA bit too thick!';
+    } else if (brix > DRAW_BRIX_MAX) {
+      message += '\nToo thick! Add sap to thin it out!';
     } else {
       message += '\nPerfect density!';
     }
 
-    if (inRange && tempOk) {
-      this.canDrawOff = true;
-      this.drawOffBtn.setVisible(true);
-      this.drawOffText.setVisible(true);
+    if (this.isDrawRangeOk()) {
+      this.setDrawOff(true);
       message += '\nReady to draw off!';
     }
 
-    this.showFact('almost');
-    this.showDensityPopup(message);
+    const factShown = this.showFact('almost');
+    if (!factShown) {
+      this.showDensityPopup(message);
+    }
   }
 
-  getBrix() {
-    return (this.sapConcentration / 100) * 70;
+  isDrawRangeOk() {
+    const brixOk = this.brix >= SYRUP_BRIX_MIN && this.brix <= DRAW_BRIX_MAX;
+    const tempOk = this.temperature >= DRAW_TEMP_MIN && this.temperature <= DRAW_TEMP_MAX;
+    return brixOk && tempOk;
+  }
+
+  setDrawOff(enabled) {
+    this.canDrawOff = enabled;
+    this.drawOffBtn.setVisible(enabled);
+    this.drawOffText.setVisible(enabled);
   }
 
   showDensityPopup(message) {
@@ -591,14 +659,16 @@ export class BoilingGame extends Phaser.Scene {
   }
 
   drawOff() {
-    // Calculate grade based on concentration
+    sfx.drawOff();
     const grade = this.getGrade();
     this.scene.start('BoilingWin', { grade, linked: this.linked });
   }
 
   getGrade() {
+    // Grade depends on how long the batch boiled: quick batches stay
+    // light (Golden), long boils darken (Very Dark).
     for (const grade of GRADES) {
-      if (this.sapConcentration >= grade.minColor && this.sapConcentration < grade.maxColor) {
+      if (this.darkness >= grade.minColor && this.darkness < grade.maxColor) {
         return grade;
       }
     }
@@ -630,6 +700,13 @@ export class BoilingGame extends Phaser.Scene {
       color: '#b0bec5',
     });
 
+    // Last hydrometer reading
+    this.lastCheckText = this.add.text(10, 48, 'Hydrometer: -- Brix', {
+      fontFamily: 'monospace',
+      fontSize: '9px',
+      color: '#b0bec5',
+    });
+
     // Hint
     this.hintText = this.add.text(GAME_WIDTH / 2, 10, 'Chop wood to get started!', {
       fontFamily: 'monospace',
@@ -645,29 +722,36 @@ export class BoilingGame extends Phaser.Scene {
     this.fireBar.fillStyle(this.fireLevel > 20 ? 0xff6a00 : 0xff0000);
     this.fireBar.fillRect(11, 33, Math.round((this.fireLevel / 100) * 98), 8);
 
-    // Update hint
+    // Update hint (highest priority first)
     if (this.isBurned) {
       this.hintText.setText('BURNED! The syrup is ruined!').setColor('#ff0000');
-    } else if (this.temperature >= SYRUP_TEMP - 5 && this.temperature < BURN_TEMP) {
-      this.hintText.setText('Getting close! Check the density!').setColor('#00ff00');
-    } else if (this.temperature >= BURN_TEMP - 10) {
+    } else if (this.temperature >= BURN_TEMP - 8) {
       this.hintText.setText('CAREFUL! Temperature is too high!').setColor('#ff4444');
+    } else if (this.brix > DRAW_BRIX_MAX) {
+      this.hintText.setText('Too thick! ADD SAP or ease off the fire!').setColor('#ff8866');
+    } else if (this.canDrawOff) {
+      this.hintText.setText("Draw off now while it's perfect!").setColor('#00ff00');
+    } else if (this.brix >= 60 && this.temperature >= DRAW_TEMP_MIN) {
+      this.hintText.setText('Density is close - press CHECK!').setColor('#00ff00');
     } else if (this.fireLevel <= 5 && this.temperature > ROOM_TEMP + 10) {
       this.hintText.setText('Fire is dying! Add more wood!').setColor('#ffdd57');
     } else if (this.woodCount > 0 && this.fireLevel <= 0) {
       this.hintText.setText('Add chopped wood to the fire!').setColor('#ffdd57');
-    } else if (this.choppingActive && this.woodCount === 0) {
+    } else if (this.choppingActive && this.woodCount === 0 && this.fireLevel <= 0) {
       this.hintText.setText('Chop wood to get started!').setColor('#ffdd57');
+    } else if (this.boilingStarted) {
+      this.hintText.setText('Hold the boil near 219F!').setColor('#e0e0e0');
     }
   }
 
   showFact(trigger) {
-    if (this.shownFacts.has(trigger)) return;
+    if (this.shownFacts.has(trigger)) return false;
     const fact = BOILING_FACTS.find(f => f.trigger === trigger);
-    if (!fact) return;
+    if (!fact) return false;
     this.shownFacts.add(trigger);
 
     this.isPaused = true;
+    sfx.popup();
     const overlay = this.add.container(0, 0).setDepth(100);
 
     const dim = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x000000, 0.6);
@@ -711,13 +795,17 @@ export class BoilingGame extends Phaser.Scene {
     overlay.add(btnText);
 
     btnBg.on('pointerdown', () => {
+      sfx.click();
       overlay.destroy();
       this.isPaused = false;
     });
+
+    return true;
   }
 
   showBurnScreen() {
     this.isPaused = true;
+    sfx.burn();
     const overlay = this.add.container(0, 0).setDepth(100);
 
     const dim = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x000000, 0.7);
@@ -748,6 +836,7 @@ export class BoilingGame extends Phaser.Scene {
     }).setOrigin(0.5).setDepth(101);
 
     btnBg.on('pointerdown', () => {
+      sfx.click();
       this.scene.restart({ linked: this.linked });
     });
   }
@@ -760,26 +849,41 @@ export class BoilingGame extends Phaser.Scene {
     // Update chopping block
     this.updateChoppingBlock(delta);
 
+    // Fresh logs get delivered so the player can never run out of fuel
+    this.logDeliveryTimer += dt;
+    if (this.logDeliveryTimer >= LOG_DELIVERY_INTERVAL) {
+      this.logDeliveryTimer = 0;
+      if (this.uncutLogs < UNCUT_LOGS_START) {
+        this.deliverLog();
+      }
+    }
+
     // Fire decays
     this.fireLevel = Math.max(0, this.fireLevel - FIRE_DECAY_RATE * dt);
 
-    // Temperature changes
+    // Temperature approaches the fire's target proportionally, so brief
+    // stoking swings don't whipsaw the pan
     const targetTemp = ROOM_TEMP + (this.fireLevel / 100) * (BURN_TEMP + 30 - ROOM_TEMP);
-    if (this.temperature < targetTemp) {
-      this.temperature += TEMP_RISE_RATE * dt;
-    } else {
-      this.temperature -= TEMP_RISE_RATE * 1.5 * dt;
-    }
+    const gap = targetTemp - this.temperature;
+    const approach = TEMP_APPROACH_RATE * (gap < 0 ? TEMP_COOL_FACTOR : 1);
+    this.temperature += gap * Math.min(1, approach * dt);
     this.temperature = Phaser.Math.Clamp(this.temperature, ROOM_TEMP, BURN_TEMP + 20);
 
-    // Concentration increases when above boiling
+    // Density: a hotter boil concentrates faster; the rise slows near
+    // the syrup point so the draw-off window stays open for a while
     if (this.temperature >= BOILING_POINT) {
       if (!this.boilingStarted) {
         this.boilingStarted = true;
         this.showFact('boiling');
       }
-      const rate = ((this.temperature - BOILING_POINT) / (SYRUP_TEMP - BOILING_POINT)) * 8;
-      this.sapConcentration = Math.min(100, this.sapConcentration + rate * dt);
+      this.darkness = Math.min(100, this.darkness + DARKNESS_RATE * dt);
+
+      const rise = BRIX_RISE_COEFF * (this.temperature - BOILING_POINT)
+        * Math.max(0.12, (BRIX_SOFT_CEIL - this.brix) / BRIX_SOFT_CEIL);
+      this.brix = Math.min(BRIX_MAX, this.brix + rise * dt);
+    } else if (this.brix > 0) {
+      // Below a boil the continuous sap feed slowly thins the batch
+      this.brix = Math.max(0, this.brix - BRIX_FALL_RATE * dt);
     }
 
     // Check for burn
@@ -790,8 +894,14 @@ export class BoilingGame extends Phaser.Scene {
     }
 
     // Grade fact trigger
-    if (this.sapConcentration > 50 && !this.shownFacts.has('grade')) {
+    if (this.brix > 50 && !this.shownFacts.has('grade')) {
       this.showFact('grade');
+    }
+
+    // Hide draw-off if conditions drift out of range; the player can
+    // always recover by adjusting fire or adding sap
+    if (this.canDrawOff && !this.isDrawRangeOk()) {
+      this.setDrawOff(false);
     }
 
     // Update visuals

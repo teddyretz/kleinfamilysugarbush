@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { GAME_WIDTH, GAME_HEIGHT } from '../config/constants.js';
+import { sfx } from '../audio.js';
 
 export class BoilingIntro extends Phaser.Scene {
   constructor() {
@@ -37,14 +38,15 @@ export class BoilingIntro extends Phaser.Scene {
 
     // Instructions
     const instructions = [
-      'Add wood to keep the fire going.',
-      'Watch the temperature - 219F is the goal.',
-      "Don't let it burn! Check density to draw off.",
+      'Chop logs and feed the fire to boil the sap.',
+      'Hold the temperature near 219F - the GOAL line.',
+      "Too thick? Add sap. Don't let it burn!",
+      'Check the density, then draw off your syrup.',
     ];
 
-    const startY = this.linked ? 190 : 175;
+    const startY = this.linked ? 185 : 172;
     instructions.forEach((line, i) => {
-      this.add.text(GAME_WIDTH / 2, startY + i * 22, line, {
+      this.add.text(GAME_WIDTH / 2, startY + i * 20, line, {
         fontFamily: 'monospace',
         fontSize: '11px',
         color: '#e0e0e0',
@@ -52,7 +54,7 @@ export class BoilingIntro extends Phaser.Scene {
     });
 
     // Start button
-    const btnY = startY + 80;
+    const btnY = startY + 100;
     const btnBg = this.add.rectangle(GAME_WIDTH / 2, btnY, 140, 36, 0xcc5500)
       .setInteractive({ useHandCursor: true });
     this.add.text(GAME_WIDTH / 2, btnY, 'FIRE IT UP', {
@@ -64,6 +66,7 @@ export class BoilingIntro extends Phaser.Scene {
     btnBg.on('pointerover', () => btnBg.setFillStyle(0xff6a00));
     btnBg.on('pointerout', () => btnBg.setFillStyle(0xcc5500));
     btnBg.on('pointerdown', () => {
+      sfx.click();
       this.scene.start('BoilingGame', { linked: this.linked, sapCollected: this.sapCollected });
     });
   }
