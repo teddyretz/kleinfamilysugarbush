@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { GAME_WIDTH, GAME_HEIGHT, GRADES } from '../config/constants.js';
+import { sfx } from '../audio.js';
 
 export class BoilingWin extends Phaser.Scene {
   constructor() {
@@ -13,6 +14,7 @@ export class BoilingWin extends Phaser.Scene {
 
   create() {
     this.cameras.main.setBackgroundColor('#1a1a2e');
+    sfx.win();
 
     // Title
     this.add.text(GAME_WIDTH / 2, 30, 'SYRUP READY!', {
@@ -63,6 +65,7 @@ export class BoilingWin extends Phaser.Scene {
     btn1Bg.on('pointerover', () => btn1Bg.setFillStyle(0x2a5faa));
     btn1Bg.on('pointerout', () => btn1Bg.setFillStyle(0x1c4587));
     btn1Bg.on('pointerdown', () => {
+      sfx.click();
       this.scene.start('BoilingIntro', { linked: false });
     });
 
@@ -77,6 +80,7 @@ export class BoilingWin extends Phaser.Scene {
     btn2Bg.on('pointerover', () => btn2Bg.setFillStyle(0x2a5faa));
     btn2Bg.on('pointerout', () => btn2Bg.setFillStyle(0x1c4587));
     btn2Bg.on('pointerdown', () => {
+      sfx.click();
       this.scene.start('TappingIntro');
     });
 
